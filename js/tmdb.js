@@ -6,6 +6,12 @@ const IMG_BASE = 'https://image.tmdb.org/t/p';
 export const posterUrl = (path, size = 'w342') =>
   path ? `${IMG_BASE}/${size}${path}` : null;
 
+export const profileUrl = (path, size = 'w185') =>
+  path ? `${IMG_BASE}/${size}${path}` : null;
+
+export const stillUrl = (path, size = 'w300') =>
+  path ? `${IMG_BASE}/${size}${path}` : null;
+
 class TmdbError extends Error {
   constructor(message, code) {
     super(message);
@@ -73,6 +79,59 @@ export async function fetchDetails(mediaType, id) {
     numberOfSeasons: data.number_of_seasons || null,
     numberOfEpisodes: data.number_of_episodes || null,
   };
+}
+
+export async function fetchMovieFull(id) {
+  const data = await tmdbFetch(`/movie/${id}`, { append_to_response: 'credits' });
+  const director = (data.credits?.crew || []).find((c) => c.job === 'Director');
+  return {
+    genres: (data.genres || []).map((g) => g.name),
+    tagline: data.tagline || '',
+    voteAverage: data.vote_average || null,
+    releaseDate: data.release_date || '',
+    runtimeMinutes: data.runtime || null,
+    director: director ? director.name : null,
+    cast: (data.credits?.cast || []).slice(0, 12).map((c) => ({
+      name: c.name,
+      character: c.character,
+      profilePath: c.profile_path,
+    })),
+  };
+}
+
+export async function fetchTvFull(id) {
+  const data = await tmdbFetch(`/tv/${id}`, { append_to_response: 'aggregate_credits' });
+  return {
+    genres: (data.genres || []).map((g) => g.name),
+    tagline: data.tagline || '',
+    voteAverage: data.vote_average || null,
+    firstAirDate: data.first_air_date || '',
+    seasons: (data.seasons || [])
+      .filter((s) => s.episode_count > 0)
+      .map((s) => ({
+        seasonNumber: s.season_number,
+        name: s.name,
+        episodeCount: s.episode_count,
+        airDate: s.air_date || '',
+      })),
+    cast: (data.aggregate_credits?.cast || []).slice(0, 12).map((c) => ({
+      name: c.name,
+      character: c.roles?.[0]?.character || '',
+      profilePath: c.profile_path,
+    })),
+  };
+}
+
+export async function fetchSeasonEpisodes(id, seasonNumber) {
+  const data = await tmdbFetch(`/tv/${id}/season/${seasonNumber}`);
+  return (data.episodes || []).map((e) => ({
+    episodeNumber: e.episode_number,
+    name: e.name,
+    overview: e.overview || '',
+    airDate: e.air_date || '',
+    runtime: e.runtime || null,
+    stillPath: e.still_path,
+  }));
 }
 
 export { TmdbError };

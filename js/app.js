@@ -1,8 +1,12 @@
-import { searchTitles, fetchDetails, TmdbError } from './tmdb.js';
+import {
+  searchTitles, fetchDetails, fetchMovieFull, fetchTvFull, fetchSeasonEpisodes, TmdbError,
+} from './tmdb.js';
 import {
   getApiKey, setApiKey, getWatchlist, addEntry, removeEntry, restoreEntry, hasEntry,
 } from './storage.js';
-import { renderResultRow, renderCard } from './ui.js';
+import {
+  renderResultRow, renderCard, renderDetailContent, renderSeasonChips, renderEpisodes,
+} from './ui.js';
 
 const searchInput = document.getElementById('searchInput');
 const searchSpinner = document.getElementById('searchSpinner');
@@ -20,10 +24,17 @@ const apiKeyInput = document.getElementById('apiKeyInput');
 const saveApiKeyBtn = document.getElementById('saveApiKeyBtn');
 const apiKeyStatus = document.getElementById('apiKeyStatus');
 
+const detailDialog = document.getElementById('detailDialog');
+const detailBody = document.getElementById('detailBody');
+const detailCloseBtn = document.getElementById('detailCloseBtn');
+
 let currentFilter = 'all';
 let searchDebounce = null;
 let searchSeq = 0;
 let toastTimer = null;
+let detailSeq = 0;
+let seasonEpisodesCache = {};
+let currentDetailTmdbId = null;
 
 function renderList() {
   const hasKey = Boolean(getApiKey());
@@ -170,6 +181,59 @@ function handleDelete(key) {
   });
 }
 
+async function openDetail(key) {
+  const entry = getWatchlist().find((item) => item.key === key);
+  if (!entry) return;
+
+  const seq = ++detailSeq;
+  seasonEpisodesCache = {};
+  currentDetailTmdbId = entry.tmdbId;
+
+  detailBody.innerHTML = '<p class="result-empty">Lädt …</p>';
+  detailDialog.showModal();
+
+  try {
+    const full = entry.mediaType === 'movie'
+      ? await fetchMovieFull(entry.tmdbId)
+      : await fetchTvFull(entry.tmdbId);
+    if (seq !== detailSeq) return;
+
+    detailBody.innerHTML = renderDetailContent(entry, full);
+
+    if (entry.mediaType === 'tv' && full.seasons?.length) {
+      const seasonRow = document.getElementById('seasonRow');
+      const defaultSeason = full.seasons.find((s) => s.seasonNumber >= 1) || full.seasons[0];
+      seasonRow.innerHTML = renderSeasonChips(full.seasons, defaultSeason.seasonNumber);
+      await loadSeason(entry.tmdbId, defaultSeason.seasonNumber, seq);
+    }
+  } catch (err) {
+    if (seq !== detailSeq) return;
+    detailBody.innerHTML = `<p class="result-error">${errMessage(err)}</p>`;
+  }
+}
+
+async function loadSeason(tmdbId, seasonNumber, seq) {
+  const episodesContainer = document.getElementById('episodesContainer');
+  if (!episodesContainer) return;
+
+  const cacheKey = `${tmdbId}-${seasonNumber}`;
+  if (seasonEpisodesCache[cacheKey]) {
+    episodesContainer.innerHTML = renderEpisodes(seasonEpisodesCache[cacheKey]);
+    return;
+  }
+
+  episodesContainer.innerHTML = '<p class="result-empty">Folgen werden geladen …</p>';
+  try {
+    const episodes = await fetchSeasonEpisodes(tmdbId, seasonNumber);
+    if (seq !== detailSeq) return;
+    seasonEpisodesCache[cacheKey] = episodes;
+    episodesContainer.innerHTML = renderEpisodes(episodes);
+  } catch (err) {
+    if (seq !== detailSeq) return;
+    episodesContainer.innerHTML = `<p class="result-error">${errMessage(err)}</p>`;
+  }
+}
+
 function openSettings() {
   apiKeyInput.value = getApiKey();
   apiKeyStatus.textContent = '';
@@ -199,10 +263,26 @@ document.addEventListener('click', (e) => {
 });
 
 listContainer.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-action="delete"]');
-  if (!btn) return;
-  const card = btn.closest('.card');
-  handleDelete(card.dataset.key);
+  const delBtn = e.target.closest('[data-action="delete"]');
+  const card = e.target.closest('.card');
+  if (!card) return;
+  if (delBtn) {
+    handleDelete(card.dataset.key);
+    return;
+  }
+  openDetail(card.dataset.key);
+});
+
+detailCloseBtn.addEventListener('click', () => detailDialog.close());
+
+detailBody.addEventListener('click', (e) => {
+  const chip = e.target.closest('.season-chip');
+  if (!chip || currentDetailTmdbId == null) return;
+  const seasonNumber = Number(chip.dataset.season);
+  for (const el of chip.parentElement.querySelectorAll('.season-chip')) {
+    el.classList.toggle('is-active', el === chip);
+  }
+  loadSeason(currentDetailTmdbId, seasonNumber, detailSeq);
 });
 
 filterBar.addEventListener('click', (e) => {
